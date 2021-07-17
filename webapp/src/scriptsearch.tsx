@@ -51,10 +51,12 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
         this.addLocal = this.addLocal.bind(this);
         this.toggleExperiment = this.toggleExperiment.bind(this);
         this.importExtensionFile = this.importExtensionFile.bind(this);
+        this.backOnHide = this.backOnHide.bind(this);
     }
 
-    private hide() {
+    private hide(evt?: any, back?: boolean) {
         this.setState({ visible: false });
+        if (back === true) this.props.parent.openPreviousEditor();
         // something changed?
         if (this.state.mode == ScriptSearchMode.Experiments &&
             this.state.experimentsState !== pxt.editor.experiments.state())
@@ -189,6 +191,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
         return Object.keys(bundled).filter(k => !/prj$/.test(k))
             .map(k => JSON.parse(bundled[k]["pxt.json"]) as pxt.PackageConfig)
             .filter(pk => !pk.hidden)
+            .filter(pk => !(!query && pk.searchOnly)) // Hide these unless user has started search
             .filter(pk => !query || pk.name.toLowerCase().indexOf(query.toLowerCase()) > -1) // search filter
             .filter(pk => boards || !pkg.mainPkg.deps[pk.name] || pkg.mainPkg.deps[pk.name].cppOnly) // don't show package already referenced in extensions
             .filter(pk => !/---/.test(pk.name)) //filter any package with ---, these are part of common-packages such as core---linux or music---pwm
@@ -243,7 +246,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
     }
 
     addUrl(scr: pxt.Cloud.JsonScript) {
-        this.hide();
+        this.hide(null, this.backOnHide());
         let p = pkg.mainEditorPkg();
         return p.setDependencyAsync(scr.name, "pub:" + scr.id)
             .then(() => this.props.parent.reloadHeaderAsync())
@@ -252,14 +255,14 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
 
     addBundle(scr: pxt.PackageConfig) {
         pxt.tickEvent("packages.bundled", { name: scr.name });
-        this.hide();
+        this.hide(null, this.backOnHide());
         this.addDepIfNoConflict(scr, "*")
             .finally(() => this.afterHide());
     }
 
     addLocal(hd: pxt.workspace.Header) {
         pxt.tickEvent("packages.local");
-        this.hide();
+        this.hide(null, this.backOnHide());
         workspace.getTextAsync(hd.id)
             .then(files => {
                 let cfg = JSON.parse(files[pxt.CONFIG_NAME]) as pxt.PackageConfig
@@ -270,7 +273,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
 
     async installGh(scr: pxt.github.GitRepo) {
         pxt.tickEvent("packages.github", { name: scr.fullName });
-        this.hide();
+        this.hide(null, this.backOnHide());
         let r: { version: string, config: pxt.PackageConfig };
         try {
             core.showLoading("downloadingpackage", lf("downloading extension..."));
@@ -286,7 +289,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
 
     async addDepIfNoConflict(config: pxt.PackageConfig, version: string) {
         try {
-            this.hide();
+            this.hide(null, this.backOnHide());
             core.showLoading("installingextension", lf("installing extension..."))
             const added = await pkg.mainEditorPkg()
                 .addDependencyAsync(config, version, this.state.mode == ScriptSearchMode.Boards)
@@ -307,8 +310,13 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
 
     importExtensionFile() {
         pxt.tickEvent("extensions.import", undefined, { interactiveConsent: true });
-        this.hide();
+        this.hide(null, this.backOnHide());
         this.props.parent.showImportFileDialog({ extension: true });
+    }
+
+    // should return to previous editor when modal is hidden if we are editing pxt.json
+    backOnHide() {
+        return this.props.parent.isPxtJsonEditor();
     }
 
     renderCore() {

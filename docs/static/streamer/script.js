@@ -91,6 +91,7 @@ function onYouTubeIframeAPIReady() {
     const state = {
         sceneIndex: -1,
         paintColor: paintColors[0],
+        face: true
     };
     let editorConfigs;
     const db = await openDbAsync();
@@ -217,6 +218,7 @@ function onYouTubeIframeAPIReady() {
         body.className = [
             scenes[state.sceneIndex],
             state.hardware && "hardware",
+            !state.face && "hideFacecam",
             state.chat && "chat",
             config.multiEditor && "multi",
             state.paint && "paint",
@@ -245,16 +247,14 @@ function onYouTubeIframeAPIReady() {
             config.stingerVideo && "hasstinger",
             config.camoverlayVideo && "hascamoverlay",
         ].filter(cls => !!cls).join(' ');
-        if (!config.faceCamId || state.faceCamError)
+        if (state.face && (!config.faceCamId || state.faceCamError))
             showSettings();
         facecamlabel.innerText = config.faceCamLabel || "";
         hardwarecamlabel.innerText = config.hardwareCamLabel || "";
     }
     function loadToolbox() {
         const config = readConfig();
-        // eslint-disable-next-line  no-inner-html
         toolbox.innerHTML = "";
-        // eslint-disable-next-line  no-inner-html
         paintbox.innerHTML = "";
         // paint
         const emojis = [];
@@ -285,6 +285,7 @@ function onYouTubeIframeAPIReady() {
         //addSceneButton("OpenPaneMirrored", "Move webcam right (Alt+Shift+3)", "right")
         //addSceneButton("Contact", "Webcam large (Alt+Shift+4)", "chat")
         addSceneButton("Timer", "Show countdown (Alt+Shift+5)", "countdown");
+        addButton(toolbox, "Webcam2", "Toggle webcam", toggleFace, state.face);
         //if (config.faceCamGreenScreen || config.hardwareCamGreenScreen) {
         //    addSep(toolbox)
         //    if (config.faceCamGreenScreen || config.hardwareCamGreenScreen)
@@ -389,6 +390,10 @@ function onYouTubeIframeAPIReady() {
         else {
             await document.firstElementChild.requestFullscreen();
         }
+    }
+    function toggleFace() {
+        state.face = !state.face;
+        render();
     }
     function setSite(url) {
         const config = readConfig();
@@ -604,7 +609,7 @@ function onYouTubeIframeAPIReady() {
         if (!evs)
             return;
         let ev;
-        // eslint-disable-next-line  no-conditional-assignment
+        // eslint-disable-next-line  no-cond-assign
         while (ev = evs.pop()) {
             if (ev.type == "down" || ev.type == "whiteboard") {
                 clearPaint();
@@ -768,7 +773,7 @@ function onYouTubeIframeAPIReady() {
             loadStyle();
             return;
         }
-        let url = `${editorConfig.url}?editorLayout=ide&nosandbox=1&parentOrigin=${encodeURIComponent(window.location.origin)}`;
+        let url = `${editorConfig.url}?editorLayout=ide&nosandbox=1}`;
         if (config.multiEditor)
             url += `&nestededitorsim=1`;
         if (hash)
@@ -1706,7 +1711,6 @@ background-image: url(${config.backgroundImage});
             downloadUrl(url, "streamer.json");
         };
         const editorselect = document.getElementById("editorselect");
-        // eslint-disable-next-line  no-inner-html
         editorselect.innerHTML = ""; // remove all web cams
         Object.keys(editorConfigs).forEach(editorid => {
             const editor = editorConfigs[editorid];
@@ -1768,7 +1772,6 @@ background-image: url(${config.backgroundImage});
             render();
         };
         const facecamselect = document.getElementById("facecamselect");
-        // eslint-disable-next-line  no-inner-html
         facecamselect.innerHTML = ""; // remove all web cams
         // no Off option
         cams.forEach(cam => {
@@ -1921,7 +1924,6 @@ background-image: url(${config.backgroundImage});
         else
             facecamerror.classList.add("hidden");
         const hardwarecamselect = document.getElementById("hardwarecamselect");
-        // eslint-disable-next-line  no-inner-html
         hardwarecamselect.innerHTML = ""; // remove all web cams
         {
             const option = document.createElement("option");
@@ -2247,7 +2249,6 @@ background-image: url(${config.backgroundImage});
             render();
         };
         const micselect = document.getElementById("micselect");
-        // eslint-disable-next-line  no-inner-html
         micselect.innerHTML = ""; // remove all web cams
         {
             const option = document.createElement("option");

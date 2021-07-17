@@ -389,3 +389,8 @@
 @assetUnselected: #e3ddd0;
 @assetTypeButton: @teal;
 
+/*---------------------------
+   Tutorial Code Validation
+----------------------------*/
+@tutorialCodeValidationCorrectBackground: @green;
+@tutorialCodeValidationCorrectTextColor: @white;

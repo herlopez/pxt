@@ -5,13 +5,19 @@ import * as pkg from "./package";
 import * as hidbridge from "./hidbridge";
 import * as webusb from "./webusb";
 import * as data from "./data";
+import * as dialogs from "./dialogs";
 import Cloud = pxt.Cloud;
+import { isDontShowDownloadDialogFlagSet } from "./dialogs";
 
 function log(msg: string) {
     pxt.debug(`cmds: ${msg}`);
 }
 
 let extensionResult: pxt.editor.ExtensionResult;
+// This can be overidden by the extension result
+pxt.commands.renderBrowserDownloadInstructions = dialogs.renderBrowserDownloadInstructions;
+pxt.commands.renderIncompatibleHardwareDialog = dialogs.renderIncompatibleHardwareDialog;
+
 
 function browserDownloadAsync(text: string, name: string, contentType: string): Promise<void> {
     pxt.BrowserUtils.browserDownloadBinText(
@@ -64,17 +70,18 @@ export function browserDownloadDeployCoreAsync(resp: pxtc.CompileResult): Promis
         return Promise.resolve();
     }
 
-    if (!userContext && (resp.saveOnly || pxt.BrowserUtils.isBrowserDownloadInSameWindow())) {
+    if (!userContext && pxt.BrowserUtils.isBrowserDownloadInSameWindow() || (!resp.saveOnly && isDontShowDownloadDialogFlagSet())) {
         return Promise.resolve()
             .then(() => window.URL?.revokeObjectURL(url));
-    } else {
+    }
+    else {
         // save does the same as download as far iOS is concerned
-        return pxt.commands.showUploadInstructionsAsync(fn, url, core.confirmAsync)
+        return pxt.commands.showUploadInstructionsAsync(fn, url, core.confirmAsync, resp.saveOnly)
             .then(() => window.URL?.revokeObjectURL(url));
     }
 }
 
-function showUploadInstructionsAsync(fn: string, url: string, confirmAsync: (options: core.PromptOptions) => Promise<number>): Promise<void> {
+function showUploadInstructionsAsync(fn: string, url: string, confirmAsync: (options: core.PromptOptions) => Promise<number>, saveonly?: boolean): Promise<void> {
     const boardName = pxt.appTarget.appTheme.boardName || lf("device");
     const boardDriveName = pxt.appTarget.appTheme.driveDisplayName || pxt.appTarget.compile.driveName || "???";
 
@@ -87,7 +94,7 @@ function showUploadInstructionsAsync(fn: string, url: string, confirmAsync: (opt
     const saveAs = pxt.BrowserUtils.hasSaveAs();
     const ext = pxt.appTarget.compile.useUF2 ? ".uf2" : ".hex";
     const connect = pxt.usb.isEnabled && pxt.appTarget?.compile?.webUSB;
-    const jsx = !userDownload && !saveAs && pxt.commands.renderBrowserDownloadInstructions && pxt.commands.renderBrowserDownloadInstructions();
+    const jsx = !userDownload && !saveAs && pxt.commands.renderBrowserDownloadInstructions && pxt.commands.renderBrowserDownloadInstructions(saveonly);
     const body = userDownload ? lf("Click 'Download' to open the {0} app.", pxt.appTarget.appTheme.boardName) :
         saveAs ? lf("Click 'Save As' and save the {0} file to the {1} drive to transfer the code into your {2}.",
             ext,
@@ -103,25 +110,25 @@ function showUploadInstructionsAsync(fn: string, url: string, confirmAsync: (opt
         hasCloseIcon: true,
         hideAgree: true,
         helpUrl,
+        bigHelpButton: true,
         className: 'downloaddialog',
         buttons: [
-            connect && {
-                label: lf("Pair device"),
-                icon: "usb",
-                className: "ligthgrey",
-                onclick: () => {
-                    pxt.tickEvent('downloaddialog.pair')
-                    core.hideDialog();
-                    maybeReconnectAsync(true)
-                }
-            },
             downloadAgain && {
                 label: userDownload ? lf("Download") : lf("Download again"),
-                icon: "download",
-                className: "primary",
+                className: userDownload ? "primary" : "lightgrey",
+                urlButton: true,
                 url,
                 fileName: fn
-            }],
+            },
+            {
+                label: lf("Done"),
+                className: "primary",
+                onclick: () => {
+                    pxt.tickEvent('downloaddialog.done')
+                    core.hideDialog();
+                }
+            },
+        ],
         timeout
     }).then(() => { });
 }
@@ -167,6 +174,28 @@ function nativeHostSaveCoreAsync(resp: pxtc.CompileResult): Promise<void> {
     return Promise.resolve();
 }
 
+export function nativeHostBackAsync(): Promise<void> {
+    log(`native back`)
+    const nativePostMessage = nativeHostPostMessageFunction();
+    if (nativePostMessage) {
+        nativePostMessage(<pxt.editor.NativeHostMessage>{
+            cmd: "backtap"
+        })
+    }
+    return Promise.resolve();
+}
+
+export function nativeHostLongpressAsync(): Promise<void> {
+    log(`native longpress`)
+    const nativePostMessage = nativeHostPostMessageFunction();
+    if (nativePostMessage) {
+        nativePostMessage(<pxt.editor.NativeHostMessage>{
+            cmd: "backpress"
+        })
+    }
+    return Promise.resolve();
+}
+
 export function hidDeployCoreAsync(resp: pxtc.CompileResult, d?: pxt.commands.DeployOptions): Promise<void> {
     pxt.tickEvent(`hid.deploy`);
     log(`hid deploy`)
@@ -185,39 +214,38 @@ export function hidDeployCoreAsync(resp: pxtc.CompileResult, d?: pxt.commands.De
     function deployAsync(): Promise<void> {
         // packetio should time out first
         return pxt.Util.promiseTimeout(120000,
-                pxt.packetio.initAsync(false)
-                    .then(dev => core.showLoadingAsync(LOADING_KEY, lf("Downloading..."),
-                        dev.reflashAsync(resp)
-                            .then(() => dev.reconnectAsync()), 5000))
-                    .then(() => core.infoNotification("Download completed!"))
-                    .finally(() => core.hideLoading(LOADING_KEY))
-            ).catch((e) => {
-                if (e.type === "repairbootloader") {
-                    return pairBootloaderAsync()
-                        .then(() => hidDeployCoreAsync(resp))
-                } else if (e.message === "timeout") {
-                    pxt.tickEvent("hid.flash.timeout");
-                    log(`flash timeout`);
-                } else if (e.type === "devicenotfound") {
-                    pxt.tickEvent("hid.flash.devicenotfound");
-                    // no device, just save
-                    log(`device not found`);
-                    return pxt.commands.saveOnlyAsync(resp);
-                } else if (e.code == 19 || e.type === "devicelocked") {
-                    // device is locked or used by another tab
-                    pxt.tickEvent("hid.flash.devicelocked");
-                    log(`error: device locked`);
-                    return pxt.commands.saveOnlyAsync(resp);
-                } else {
-                    pxt.tickEvent("hid.flash.error");
-                    log(`hid error ${e.message}`)
-                    pxt.reportException(e)
-                    if (d) d.reportError(e.message);
-                }
-
-                // default, save file
+            pxt.packetio.initAsync(false)
+                .then(dev => core.showLoadingAsync(LOADING_KEY, lf("Downloading..."),
+                    dev.reflashAsync(resp)
+                        .then(() => dev.reconnectAsync()), 5000))
+                .finally(() => core.hideLoading(LOADING_KEY))
+        ).catch((e) => {
+            if (e.type === "repairbootloader") {
+                return pairBootloaderAsync()
+                    .then(() => hidDeployCoreAsync(resp))
+            } else if (e.message === "timeout") {
+                pxt.tickEvent("hid.flash.timeout");
+                log(`flash timeout`);
+            } else if (e.type === "devicenotfound") {
+                pxt.tickEvent("hid.flash.devicenotfound");
+                // no device, just save
+                log(`device not found`);
                 return pxt.commands.saveOnlyAsync(resp);
-            })
+            } else if (e.code == 19 || e.type === "devicelocked") {
+                // device is locked or used by another tab
+                pxt.tickEvent("hid.flash.devicelocked");
+                log(`error: device locked`);
+                return pxt.commands.saveOnlyAsync(resp);
+            } else {
+                pxt.tickEvent("hid.flash.error");
+                log(`hid error ${e.message}`)
+                pxt.reportException(e)
+                if (d) d.reportError(e.message);
+            }
+
+            // default, save file
+            return pxt.commands.saveOnlyAsync(resp);
+        })
     }
 }
 
@@ -311,6 +339,10 @@ function applyExtensionResult() {
     if (res.renderUsbPairDialog) {
         log(`extension renderUsbPairDialog`)
         pxt.commands.renderUsbPairDialog = res.renderUsbPairDialog;
+    }
+    if (res.renderIncompatibleHardwareDialog) {
+        log(`extension renderIncompatibleHardwareDialog`)
+        pxt.commands.renderIncompatibleHardwareDialog = res.renderIncompatibleHardwareDialog;
     }
     if (res.showUploadInstructionsAsync) {
         log(`extension upload instructions async`);
@@ -508,10 +540,10 @@ async function requestPacketIOLockAsync() {
                 lock: lockRef
             });
         })
-        .finally(() => {
-            pendingPacketIOLockResolver = undefined;
-            pendingPacketIOLockRejecter = undefined;
-        })
+            .finally(() => {
+                pendingPacketIOLockResolver = undefined;
+                pendingPacketIOLockRejecter = undefined;
+            })
     }
 }
 
@@ -574,7 +606,7 @@ export async function handleServiceWorkerMessageAsync(message: pxt.ServiceWorker
 async function checkIfServiceWorkerSupportedAsync() {
     if (serviceWorkerSupported !== undefined) return serviceWorkerSupported;
 
-    const p =  new Promise<void>(resolve => {
+    const p = new Promise<void>(resolve => {
         // This is resolved in handleServiceWorkerMessageAsync when the
         // service worker sends back the appropriate response
         serviceWorkerSupportedResolver = resolve;
@@ -612,6 +644,57 @@ function handlePacketIOApi(r: string) {
     }
     return false;
 }
+
+export function showUnsupportedHardwareMessageAsync(resp: pxtc.CompileResult) {
+    if (!pxt.packetio.isConnected()) return true;
+
+    const unsupportedParts = pxt.packetio.unsupportedParts();
+    const parts = pxtc.computeUsedParts(resp);
+
+    let unsupported: string[] = [];;
+    for (const part of unsupportedParts) {
+        if (parts.indexOf(part) !== -1) {
+            unsupported.push(part);
+            break;
+        }
+    }
+
+    if (unsupported.length) {
+        const jsx = pxt.commands.renderIncompatibleHardwareDialog(unsupported);
+        pxt.tickEvent('unsupportedhardwaredialog.shown')
+
+        const helpUrl = pxt.appTarget.appTheme.downloadDialogTheme?.incompatibleHardwareHelpURL;
+        let cancelled = true;
+        return core.confirmAsync({
+            header: lf("Incompatible Code"),
+            jsx,
+            hasCloseIcon: true,
+            hideAgree: true,
+            helpUrl,
+            bigHelpButton: true,
+            className: 'downloaddialog',
+            buttons: [
+                {
+                    label: lf("Download Anyway"),
+                    className: "primary",
+                    onclick: () => {
+                        pxt.tickEvent('unsupportedhardwaredialog.downloadagain')
+                        cancelled = false;
+                        core.hideDialog();
+                    }
+                },
+            ]
+        }).then(() => {
+            if (cancelled) {
+                pxt.tickEvent('unsupportedhardwaredialog.cancelled')
+            }
+
+            return !cancelled;
+        });
+    }
+    return Promise.resolve(true);
+}
+
 data.mountVirtualApi("packetio", {
     getSync: handlePacketIOApi
 });
